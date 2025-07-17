@@ -1,4 +1,3 @@
-
 package physics
 
 import "core:math"

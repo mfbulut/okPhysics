@@ -1,91 +1,112 @@
 package sample
 
 import phy "physics"
-
 import rl "vendor:raylib"
 
-SCREEN_WIDTH  :: 1280
-SCREEN_HEIGHT :: 720
-
-World :: struct {
-    bodies : [dynamic]phy.RigidBody,
-    joints : [dynamic]phy.Joint,
-    mouse_anchor: phy.Anchor,
-}
+bodies : [dynamic]phy.RigidBody
+joints : [dynamic]phy.Joint
+mouse_anchor: phy.Anchor
 
 main :: proc() {
     rl.SetConfigFlags({.VSYNC_HINT, .MSAA_4X_HINT})
-    rl.InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Physics")
+    rl.InitWindow(1280, 720, "Physics")
 
-    world : World
+    reserve(&bodies, 2048)
+    reserve(&joints, 2048)
 
-    init_world(&world)
+    init_world()
 
     for !rl.WindowShouldClose() {
-        dt := rl.GetFrameTime()
+        dt := min(rl.GetFrameTime(), 0.05)
 
-        handle_mouse(&world, dt)
-        update_world(&world, dt)
+        handle_mouse(dt)
+        update_world(dt)
 
         rl.BeginDrawing()
-        rl.ClearBackground(rl.Color{18, 18, 36, 255})
+        rl.ClearBackground(rl.Color{10, 18, 30, 255})
 
-        draw_world(&world)
+        draw_world()
 
         rl.EndDrawing()
     }
 }
 
-init_world :: proc(world: ^World) {
-    append(&world.bodies,
-        phy.create_box({SCREEN_WIDTH/2, SCREEN_HEIGHT - 25}, SCREEN_WIDTH, 50, 0),
+init_world :: proc() {
+    append(&bodies, phy.create_box({640, 690}, 1200, 30, 0))
 
-        phy.create_box({500, 100}, 40, 40, 1.0),
-        phy.create_box({600, 100}, 40, 40, 1.0),
-        phy.create_box({700, 100}, 40, 40, 1.0),
-        phy.create_triangle({800, 200}, 25, 1.0),
-        phy.create_triangle({900, 200}, 25, 1.0),
-    )
+    append(&bodies, phy.create_box({200, 400}, 100, 20, 1.0))
+    anchor_hinge_a := phy.create_anchor(&bodies[0], {200, 400})
+    anchor_hinge_b := phy.create_anchor(&bodies[1], {200, 400})
+    append(&joints, phy.create_joint(anchor_hinge_a, anchor_hinge_b, .HINGE))
 
-    chain_links := 5
+    append(&bodies, phy.create_box({400, 300}, 40, 40, 1.0))
+    append(&bodies, phy.create_box({440, 300}, 40, 40, 1.0))
+    anchor_fixed_a := phy.create_anchor(&bodies[2], {420, 300})
+    anchor_fixed_b := phy.create_anchor(&bodies[3], {420, 300})
+    append(&joints, phy.create_joint(anchor_fixed_a, anchor_fixed_b, .FIXED))
 
-    for i in 0..<chain_links {
-        x := 100 + f32(i) * 60
-        append(&world.bodies, phy.create_box({x, 200}, 30, 30, 1.0))
-    }
+    append(&bodies, phy.create_box({600, 200}, 50, 50, 1.0))
+    anchor_dist_a := phy.create_anchor(&bodies[0], {600, 50})
+    anchor_dist_b := phy.create_anchor(&bodies[4], {600, 200})
+    append(&joints, phy.create_joint(anchor_dist_a, anchor_dist_b, .FORCE))
 
-    for i in 0..<chain_links-1 {
-        body_a := &world.bodies[len(world.bodies) - chain_links + i]
-        body_b := &world.bodies[len(world.bodies) - chain_links + i + 1]
+    append(&bodies, phy.create_box({800, 100}, 30, 60, 1.0))
+    append(&bodies, phy.create_box({800, 180}, 30, 60, 1.0))
+    append(&bodies, phy.create_box({800, 260}, 30, 60, 1.0))
 
-        anchor_a := body_a.position + phy.Vector2{15, 0}
-        anchor_b := body_b.position + phy.Vector2{-15, 0}
+    a_chain_ground := phy.create_anchor(&bodies[0], {800, 70})
+    a_chain_5_top  := phy.create_anchor(&bodies[5], {800, 70})
+    append(&joints, phy.create_joint(a_chain_ground, a_chain_5_top, .HINGE))
 
-        joint := phy.create_distance_joint(body_a, body_b, anchor_a, anchor_b, 400.0, 2.0)
-        append(&world.joints, joint)
-    }
+    a_chain_5_bot  := phy.create_anchor(&bodies[5], {800, 130})
+    a_chain_6_top  := phy.create_anchor(&bodies[6], {800, 150})
+    append(&joints, phy.create_joint(a_chain_5_bot, a_chain_6_top, .HINGE))
+
+    a_chain_6_bot  := phy.create_anchor(&bodies[6], {800, 210})
+    a_chain_7_top  := phy.create_anchor(&bodies[7], {800, 230})
+    append(&joints, phy.create_joint(a_chain_6_bot, a_chain_7_top, .HINGE))
+
+    append(&bodies, phy.create_box({1000, 400}, 200, 20, 1.0))
+
+    a_bridge_l_ground := phy.create_anchor(&bodies[0], {900, 300})
+    a_bridge_l_plat   := phy.create_anchor(&bodies[8], {900, 400})
+    append(&joints, phy.create_joint(a_bridge_l_ground, a_bridge_l_plat, .FORCE))
+
+    a_bridge_r_ground := phy.create_anchor(&bodies[0], {1100, 300})
+    a_bridge_r_plat   := phy.create_anchor(&bodies[8], {1100, 400})
+    append(&joints, phy.create_joint(a_bridge_r_ground, a_bridge_r_plat, .FORCE))
 }
 
-update_world :: proc(world: ^World, dt: f32) {
-    for &body in world.bodies {
-        phy.apply_force(&body, phy.Vector2{0, 980} * body.mass * dt)
-        phy.integrate(&body, dt)
-    }
+update_world :: proc(total_dt: f32) {
+    substeps := 4
+    sub_dt := total_dt / f32(substeps)
 
-    for &joint in world.joints {
-        phy.solve_joint(&joint, dt)
-    }
+    for i in 0..<substeps {
+        for &body in bodies {
+            phy.apply_force(&body, phy.Vector2{0, 980} * body.mass * sub_dt)
+        }
 
-    for &bodyA, i in world.bodies {
-        for &bodyB in world.bodies[i+1:] {
-            manifold := phy.collide(&bodyA, &bodyB)
-            phy.resolve(manifold)
+        for &body in bodies {
+            phy.integrate(&body, sub_dt)
+        }
+
+        for &joint in joints {
+            phy.solve_joint(&joint, sub_dt)
+        }
+
+        for &bodyA, i in bodies {
+            for &bodyB in bodies[i+1:] {
+                manifold := phy.collide(&bodyA, &bodyB)
+                if manifold.collision {
+                    phy.resolve(manifold)
+                }
+            }
         }
     }
 }
 
-draw_world :: proc(world: ^World) {
-    for &body in world.bodies {
+draw_world :: proc() {
+    for &body in bodies {
         verticies := body.transformed_verticies
         count := i32(len(verticies))
 
@@ -94,9 +115,7 @@ draw_world :: proc(world: ^World) {
         rl.DrawLineStrip(&verticies[0], count, rl.WHITE)
     }
 
-    for &joint in world.joints {
-        if !joint.enabled do continue
-
+    for &joint in joints {
         pos_a := phy.anchor_position(joint.anchor_a)
         pos_b := phy.anchor_position(joint.anchor_b)
 
@@ -107,40 +126,40 @@ draw_world :: proc(world: ^World) {
 
     mouse_pos := rl.GetMousePosition()
 
-    if world.mouse_anchor.body != nil {
-        rl.DrawLineV(phy.anchor_position(world.mouse_anchor), mouse_pos, rl.Color{255, 0, 0, 255})
+    if mouse_anchor.body != nil {
+        rl.DrawLineV(phy.anchor_position(mouse_anchor), mouse_pos, rl.Color{255, 0, 0, 255})
         rl.DrawCircleV(mouse_pos, 3, rl.Color{255, 0, 0, 100})
     }
 }
 
-handle_mouse :: proc(world: ^World, dt : f32) {
+handle_mouse :: proc(dt : f32) {
     mouse_pos := rl.GetMousePosition()
 
     if rl.IsMouseButtonPressed(.LEFT) {
-        for &body in world.bodies {
+        for &body in bodies {
             if phy.point_in_rigidbody(mouse_pos, &body) {
-                world.mouse_anchor = phy.create_anchor(&body, mouse_pos)
+                mouse_anchor = phy.create_anchor(&body, mouse_pos)
                 break
             }
         }
     }
 
     if rl.IsMouseButtonReleased(.LEFT) {
-        world.mouse_anchor = {}
+        mouse_anchor = {}
     }
 
-    if world.mouse_anchor.body != nil {
-        pos := phy.anchor_position(world.mouse_anchor)
+    if mouse_anchor.body != nil {
+        pos := phy.anchor_position(mouse_anchor)
         displacement := mouse_pos - pos
-        phy.apply_force_at_point(world.mouse_anchor.body, displacement * 400 * dt, pos)
+        phy.apply_force_at_point(mouse_anchor.body, displacement * 400 * dt, pos)
 
-        world.mouse_anchor.body.velocity *= 0.9
-        world.mouse_anchor.body.angular_velocity *= 0.95
+        mouse_anchor.body.velocity *= 0.9
+        mouse_anchor.body.angular_velocity *= 0.95
     }
 
     if rl.IsMouseButtonPressed(.RIGHT) {
         new_body := phy.create_box(mouse_pos, 30, 30, 1.0)
         new_body.restitution = 0.7
-        append(&world.bodies, new_body)
+        append(&bodies, new_body)
     }
 }

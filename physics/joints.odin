@@ -50,7 +50,7 @@ Joint :: struct {
 	type:                 JointType,
 	anchor_a:             Anchor,
 	anchor_b:             Anchor,
-	initial_length:        f32,
+	initial_length:       f32,
 	relative_orientation: f32,
 	enabled:              bool,
 }

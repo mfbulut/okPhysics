@@ -3,16 +3,13 @@ package sample
 import phy "physics"
 import rl "vendor:raylib"
 
-bodies : [dynamic]phy.RigidBody
-joints : [dynamic]phy.Joint
+bodies : [dynamic; 2048]phy.RigidBody
+joints : [dynamic; 2048]phy.Joint
 mouse_anchor: phy.Anchor
 
 main :: proc() {
     rl.SetConfigFlags({.VSYNC_HINT, .MSAA_4X_HINT})
     rl.InitWindow(1280, 720, "Physics")
-
-    reserve(&bodies, 2048)
-    reserve(&joints, 2048)
 
     init_world()
 

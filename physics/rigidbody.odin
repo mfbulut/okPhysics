@@ -9,35 +9,30 @@ RigidBody :: struct {
 	verticies:             []Vector2,
 	transformed_verticies: []Vector2,
 	normals:               []Vector2,
-
 	position:              Vector2,
 	velocity:              Vector2,
-
 	rotation:              f32,
 	angular_velocity:      f32,
-
 	mass:                  f32,
 	inv_mass:              f32,
-
 	moment_of_inertia:     f32,
 	inv_moment:            f32,
-
 	restitution:           f32,
 	friction:              f32,
 }
 
 CollisionManifold :: struct {
 	body_a, body_b: ^RigidBody,
-	point:  Vector2,
+	point: Vector2,
 	normal: Vector2,
-	depth:          f32,
-	collision:      bool,
+	depth: f32,
+	collision: bool,
 }
 
 SupportPoint :: struct {
 	vertex: Vector2,
-	depth:  f32,
-	valid:  bool,
+	depth: f32,
+	valid: bool,
 }
 
 create_rigidbody :: proc(points: []Vector2, position: Vector2, mass: f32 = 1, restitution: f32 = 0, friction: f32 = 0.5) -> RigidBody {
@@ -57,12 +52,11 @@ create_rigidbody :: proc(points: []Vector2, position: Vector2, mass: f32 = 1, re
 	rb.moment_of_inertia = calculate_moment_of_inertia(&rb)
 	rb.inv_moment = rb.moment_of_inertia > 0 ? 1.0 / rb.moment_of_inertia : 0
 
-	update_transformed_verticies(&rb)
+	transform_verticies(&rb)
 
 	return rb
 }
 
-@(private)
 calculate_moment_of_inertia :: proc(rb: ^RigidBody) -> f32 {
 	if rb.mass <= 0 do return 0
 
@@ -74,8 +68,7 @@ calculate_moment_of_inertia :: proc(rb: ^RigidBody) -> f32 {
 	return rb.mass * moment / f32(len(rb.verticies))
 }
 
-@(private)
-update_transformed_verticies :: proc(rb: ^RigidBody) {
+transform_verticies :: proc(rb: ^RigidBody) {
 	cos_rot := math.cos(rb.rotation)
 	sin_rot := math.sin(rb.rotation)
 
@@ -100,10 +93,9 @@ integrate :: proc(rb: ^RigidBody, dt: f32) {
     rb.position += rb.velocity * dt
     rb.rotation += rb.angular_velocity * dt
 
-    update_transformed_verticies(rb)
+    transform_verticies(rb)
 }
 
-@(private)
 find_support_point :: proc(point: Vector2, normal: Vector2, verticies: []Vector2) -> SupportPoint {
 	support: SupportPoint
 
@@ -120,7 +112,6 @@ find_support_point :: proc(point: Vector2, normal: Vector2, verticies: []Vector2
 	return support
 }
 
-@(private)
 get_contact_point :: proc(body_a, body_b: ^RigidBody) -> CollisionManifold {
 	result: CollisionManifold
 
@@ -131,7 +122,7 @@ get_contact_point :: proc(body_a, body_b: ^RigidBody) -> CollisionManifold {
 
 		support := find_support_point(point, normal, body_b.transformed_verticies)
 		if !support.valid {
-			return result
+			return {}
 		}
 
 		if support.depth < min_depth {
@@ -178,107 +169,61 @@ collide :: proc(body_a, body_b: ^RigidBody) -> CollisionManifold {
 }
 
 resolve :: proc(manifold: CollisionManifold) {
-	if !manifold.collision do return
+    a, b := manifold.body_a, manifold.body_b
+    if a.inv_mass == 0 && b.inv_mass == 0 do return
 
-	rigidbodyA := manifold.body_a
-	rigidbodyB := manifold.body_b
+    r_a := manifold.point - a.position
+    r_b := manifold.point - b.position
 
-	if rigidbodyA.inv_mass == 0 && rigidbodyB.inv_mass == 0 {
-		return
-	}
+    perp :: proc(r: Vector2) -> Vector2 { return {-r.y, r.x} }
 
-	penetrationToCentroidA := manifold.point - rigidbodyA.position
-	penetrationToCentroidB := manifold.point - rigidbodyB.position
+    rel_vel := (b.velocity + perp(r_b) * b.angular_velocity) - (a.velocity + perp(r_a) * a.angular_velocity)
 
-	angularVelocityPenetrationCentroidA := Vector2 {
-		-rigidbodyA.angular_velocity * penetrationToCentroidA.y,
-		rigidbodyA.angular_velocity * penetrationToCentroidA.x,
-	}
+    vel_along_normal := linalg.dot(rel_vel, manifold.normal)
+    if vel_along_normal > 0 do return
 
-	angularVelocityPenetrationCentroidB := Vector2 {
-		-rigidbodyB.angular_velocity * penetrationToCentroidB.y,
-		rigidbodyB.angular_velocity * penetrationToCentroidB.x,
-	}
+    e := min(a.restitution, b.restitution)
+    r_a_cross := linalg.cross(r_a, manifold.normal)
+    r_b_cross := linalg.cross(r_b, manifold.normal)
 
-	relativeVelocityA := rigidbodyA.velocity + angularVelocityPenetrationCentroidA
-	relativeVelocityB := rigidbodyB.velocity + angularVelocityPenetrationCentroidB
+    inv_mass_sum := a.inv_mass + b.inv_mass
+    angular_term := r_a_cross * r_a_cross * a.inv_moment + r_b_cross * r_b_cross * b.inv_moment
 
-	relativeVel := relativeVelocityB - relativeVelocityA
-	velocityInNormal := linalg.dot(relativeVel, manifold.normal)
+    j := -(1 + e) * vel_along_normal / (inv_mass_sum + angular_term)
+    impulse := manifold.normal * j
 
-	if velocityInNormal > 0 {
-		return
-	}
+    a.velocity -= impulse * a.inv_mass
+    b.velocity += impulse * b.inv_mass
+    a.angular_velocity -= r_a_cross * j * a.inv_moment
+    b.angular_velocity += r_b_cross * j * b.inv_moment
 
-	e := min(rigidbodyA.restitution, rigidbodyB.restitution)
+    rel_vel = (b.velocity + perp(r_b) * b.angular_velocity) - (a.velocity + perp(r_a) * a.angular_velocity)
 
-	pToCentroidCrossNormalA :=
-		penetrationToCentroidA.x * manifold.normal.y -
-		penetrationToCentroidA.y * manifold.normal.x
-	pToCentroidCrossNormalB :=
-		penetrationToCentroidB.x * manifold.normal.y -
-		penetrationToCentroidB.y * manifold.normal.x
+    tangent := rel_vel - manifold.normal * linalg.dot(rel_vel, manifold.normal)
+    tangent = linalg.normalize0(tangent)
 
-	invMassSum := rigidbodyA.inv_mass + rigidbodyB.inv_mass
-	crossNSum :=
-		pToCentroidCrossNormalA * pToCentroidCrossNormalA * rigidbodyA.inv_moment +
-		pToCentroidCrossNormalB * pToCentroidCrossNormalB * rigidbodyB.inv_moment
+    r_a_cross_t := linalg.cross(r_a, tangent)
+    r_b_cross_t := linalg.cross(r_b, tangent)
+    angular_tan_term := r_a_cross_t * r_a_cross_t * a.inv_moment + r_b_cross_t * r_b_cross_t * b.inv_moment
 
-	j := -(1 + e) * velocityInNormal
-	j /= (invMassSum + crossNSum)
+    jt := -linalg.dot(rel_vel, tangent) * min(a.friction, b.friction)
+    jt /= (inv_mass_sum + angular_tan_term)
+    jt = min(jt, j)
 
-	impulseVector := manifold.normal * j
+    friction_impulse := tangent * jt
 
-	rigidbodyA.velocity -= impulseVector * rigidbodyA.inv_mass
-	rigidbodyB.velocity += impulseVector * rigidbodyB.inv_mass
+    a.velocity -= friction_impulse * a.inv_mass
+    b.velocity += friction_impulse * b.inv_mass
+    a.angular_velocity -= r_a_cross_t * jt * a.inv_moment
+    b.angular_velocity += r_b_cross_t * jt * b.inv_moment
 
-	rigidbodyA.angular_velocity += -pToCentroidCrossNormalA * j * rigidbodyA.inv_moment
-	rigidbodyB.angular_velocity += pToCentroidCrossNormalB * j * rigidbodyB.inv_moment
+    correction := manifold.normal * (manifold.depth / (a.inv_mass + b.inv_mass) * 0.9)
 
-	// Friction
-	velocityInNormalDirection := manifold.normal * linalg.dot(relativeVel, manifold.normal)
-	tangent := relativeVel - velocityInNormalDirection
+    a.position -= correction * a.inv_mass
+    b.position += correction * b.inv_mass
 
-	if linalg.length(tangent) > 0.00001 {
-		tangent = linalg.normalize(tangent)
-	} else {
-		tangent = Vector2{0, 0}
-	}
-
-	minFriction := min(rigidbodyA.friction, rigidbodyB.friction)
-
-	pToCentroidCrossTangentA := penetrationToCentroidA.x * tangent.y - penetrationToCentroidA.y * tangent.x
-	pToCentroidCrossTangentB := penetrationToCentroidB.x * tangent.y - penetrationToCentroidB.y * tangent.x
-
-	crossSumTangent :=
-		pToCentroidCrossTangentA * pToCentroidCrossTangentA * rigidbodyA.inv_moment +
-		pToCentroidCrossTangentB * pToCentroidCrossTangentB * rigidbodyB.inv_moment
-
-	frictionalImpulse := -linalg.dot(relativeVel, tangent) * minFriction
-	frictionalImpulse /= (invMassSum + crossSumTangent)
-
-	if frictionalImpulse > j {
-		frictionalImpulse = j
-	}
-
-	frictionalImpulseVector := tangent * frictionalImpulse
-
-	rigidbodyA.velocity -= frictionalImpulseVector * rigidbodyA.inv_mass
-	rigidbodyB.velocity += frictionalImpulseVector * rigidbodyB.inv_mass
-
-	rigidbodyA.angular_velocity += -pToCentroidCrossTangentA * frictionalImpulse * rigidbodyA.inv_moment
-	rigidbodyB.angular_velocity += pToCentroidCrossTangentB * frictionalImpulse * rigidbodyB.inv_moment
-
-	// Positional correction
-	correctionPercentage: f32 = 0.9
-	amountToCorrect  := (manifold.depth / (rigidbodyA.inv_mass + rigidbodyB.inv_mass)) * correctionPercentage
-	correctionVector := manifold.normal * amountToCorrect
-
-	rigidbodyA.position -= correctionVector * rigidbodyA.inv_mass
-	rigidbodyB.position += correctionVector * rigidbodyB.inv_mass
-
-	update_transformed_verticies(rigidbodyA)
-	update_transformed_verticies(rigidbodyB)
+    transform_verticies(a)
+    transform_verticies(b)
 }
 
 apply_force :: proc(rb: ^RigidBody, force: Vector2) {
@@ -290,9 +235,8 @@ apply_torque :: proc(rb: ^RigidBody, torque: f32) {
 }
 
 apply_force_at_point :: proc(rb: ^RigidBody, force: Vector2, point: Vector2) {
-	apply_force(rb, force)
-
-	r := Vector2{point.x - rb.position.x, point.y - rb.position.y}
+	r := point - rb.position
 	torque := r.x * force.y - r.y * force.x
 	apply_torque(rb, torque)
+	apply_force(rb, force)
 }

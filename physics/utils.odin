@@ -6,10 +6,9 @@ point_in_rigidbody :: proc(point: Vector2, body: ^RigidBody) -> bool {
 	n := len(vertices)
 
 	for i in 0..<n {
-		j := (i + 1) % n
 
 		vert_a := vertices[i]
-		vert_b := vertices[j]
+		vert_b := vertices[(i + 1) % n]
 
 		if ((vert_a.y > point.y) != (vert_b.y > point.y)) && (point.x < (vert_b.x - vert_a.x) * (point.y - vert_a.y) / (vert_b.y - vert_a.y) + vert_a.x) {
 			count += 1
